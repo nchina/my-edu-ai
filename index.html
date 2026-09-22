@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎓 智绘教研 AI 助教工作台</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; color: #333; height: 100vh; display: flex; flex-direction: column; }
+    header { background: #1890ff; color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    header h1 { font-size: 18px; font-weight: 600; }
+    .container { flex: 1; max-width: 1000px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; padding: 16px; gap: 16px; overflow: hidden; }
+    .chat-box { flex: 1; background: white; border-radius: 12px; padding: 20px; overflow-y: auto; box-shadow: 0 2px 12px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 16px; }
+    .message { display: flex; flex-direction: column; max-width: 85%; }
+    .message.user { align-self: flex-end; }
+    .message.assistant { align-self: flex-start; }
+    .bubble { padding: 12px 16px; border-radius: 12px; font-size: 15px; line-height: 1.6; word-break: break-word; }
+    .message.user .bubble { background: #1890ff; color: white; border-bottom-right-radius: 2px; }
+    .message.assistant .bubble { background: #f5f5f5; color: #333; border-bottom-left-radius: 2px; }
+    .bubble img.generated-img { max-width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid #ddd; }
+    .preview-bar { background: #e6f7ff; border: 1px dashed #91d5ff; padding: 8px 12px; border-radius: 8px; display: none; align-items: center; gap: 12px; }
+    .preview-bar img { height: 50px; width: 50px; object-fit: cover; border-radius: 4px; }
+    .preview-bar span { font-size: 13px; color: #1890ff; flex: 1; }
+    .preview-bar button { background: none; border: none; color: #ff4d4f; cursor: pointer; font-size: 16px; }
+    .input-panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 12px; }
+    .mode-selector { display: flex; gap: 10px; }
+    .mode-btn { padding: 6px 16px; border-radius: 20px; border: 1px solid #d9d9d9; background: white; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+    .mode-btn.active { background: #1890ff; color: white; border-color: #1890ff; }
+    .input-row { display: flex; gap: 12px; align-items: flex-end; }
+    textarea { flex: 1; border: 1px solid #d9d9d9; border-radius: 8px; padding: 10px; font-size: 14px; outline: none; resize: none; height: 50px; font-family: inherit; }
+    textarea:focus { border-color: #1890ff; }
+    .btn { padding: 0 20px; height: 50px; background: #1890ff; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; font-size: 15px; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+    .upload-btn { display: flex; align-items: center; justify-content: center; width: 50px; height: 50px; border: 1px solid #d9d9d9; border-radius: 8px; cursor: pointer; color: #666; font-size: 20px; }
+    .quote-btn { margin-top: 8px; font-size: 12px; color: #1890ff; background: none; border: 1px solid #1890ff; padding: 4px 8px; border-radius: 4px; cursor: pointer; align-self: flex-start; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🤖 智能 AI 助手工作台</h1>
+  </header>
+
+  <div class="container">
+    <div class="chat-box" id="chatBox">
+      <div class="message assistant">
+        <div class="bubble">你好！我是你的 AI 助手。你可以和我对话提问、上传图片进行分析，或者切换到生图模式生成图像。</div>
+      </div>
+    </div>
+
+    <div class="preview-bar" id="previewBar">
+      <img id="previewImg" src="" alt="参考图">
+      <span id="previewText">已加载参考图片</span>
+      <button onclick="clearImage()">✕</button>
+    </div>
+
+    <div class="input-panel">
+      <div class="mode-selector">
+        <button class="mode-btn active" id="btnChat" onclick="setMode('chat')">📝 智能对话 / 识图</button>
+        <button class="mode-btn" id="btnDraw" onclick="setMode('draw')">🎨 图像生成</button>
+      </div>
+
+      <div class="input-row">
+        <label class="upload-btn" title="上传参考图片">
+          📷
+          <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFileUpload(event)">
+        </label>
+        <textarea id="promptInput" placeholder="输入你想咨询的问题..."></textarea>
+        <button class="btn" id="sendBtn" onclick="handleSubmit()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ⚠️ 记得修改这里：替换为你新创建的 Worker 域名地址
+    const WORKER_URL = "https://edu-ai-assistant.cn329549073.workers.dev";
+
+    let currentMode = 'chat';
+    let currentBase64Image = null;
+
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('btnChat').classList.toggle('active', mode === 'chat');
+      document.getElementById('btnDraw').classList.toggle('active', mode === 'draw');
+      document.getElementById('promptInput').placeholder = mode === 'chat' 
+        ? "输入你想咨询的问题..." 
+        : "输入希望生成的画面描述...";
+    }
+
+    function handleFileUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        currentBase64Image = evt.target.result;
+        document.getElementById('previewImg').src = currentBase64Image;
+        document.getElementById('previewBar').style.display = 'flex';
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function clearImage() {
+      currentBase64Image = null;
+      document.getElementById('previewBar').style.display = 'none';
+      document.getElementById('fileInput').value = '';
+    }
+
+    function addMessage(role, content, imageUrl = null) {
+      const chatBox = document.getElementById('chatBox');
+      const msgDiv = document.createElement('div');
+      msgDiv.className = `message ${role}`;
+      
+      const bubbleDiv = document.createElement('div');
+      bubbleDiv.className = 'bubble';
+
+      if (role === 'assistant') {
+        bubbleDiv.innerHTML = marked.parse(content);
+        if (imageUrl) {
+          const img = document.createElement('img');
+          img.src = imageUrl;
+          img.className = 'generated-img';
+          bubbleDiv.appendChild(img);
+
+          const quoteBtn = document.createElement('button');
+          quoteBtn.className = 'quote-btn';
+          quoteBtn.innerText = '📌 引用此图修改二次创作';
+          quoteBtn.onclick = () => {
+            currentBase64Image = imageUrl;
+            document.getElementById('previewImg').src = imageUrl;
+            document.getElementById('previewBar').style.display = 'flex';
+            setMode('draw');
+          };
+          bubbleDiv.appendChild(quoteBtn);
+        }
+      } else {
+        bubbleDiv.innerText = content;
+      }
+
+      msgDiv.appendChild(bubbleDiv);
+      chatBox.appendChild(msgDiv);
+      chatBox.scrollTop = chatBox.scrollHeight;
+      return bubbleDiv;
+    }
+
+    async function handleSubmit() {
+      const promptInput = document.getElementById('promptInput');
+      const prompt = promptInput.value.trim();
+      const sendBtn = document.getElementById('sendBtn');
+
+      if (!prompt && !currentBase64Image) return;
+
+      let userText = prompt;
+      if (currentBase64Image && !prompt) {
+        userText = currentMode === 'draw' ? "[图生图指令] 请参考此图修改" : "[识图指令] 请分析此图片内容";
+      }
+      addMessage('user', userText);
+
+      promptInput.value = '';
+      sendBtn.disabled = true;
+
+      const payload = {
+        prompt: prompt,
+        imageBase64: currentBase64Image,
+        mode: currentMode
+      };
+
+      try {
+        const response = await fetch(WORKER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get("content-type");
+
+        if (contentType && contentType.includes("application/json")) {
+          const data = await response.json();
+          addMessage('assistant', data.content || data.text || "完成", data.imageUrl);
+          clearImage();
+        } else if (contentType && contentType.includes("text/event-stream")) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          const assistantBubble = addMessage('assistant', '...');
+          let fullContent = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split("\n");
+            for (let line of lines) {
+              if (line.startsWith("data: ")) {
+                const dataStr = line.replace("data: ", "").trim();
+                if (dataStr === "[DONE]") continue;
+                try {
+                  const json = JSON.parse(dataStr);
+                  if (json.response) {
+                    fullContent += json.response;
+                    assistantBubble.innerHTML = marked.parse(fullContent);
+                  }
+                } catch (e) {}
+              }
+            }
+          }
+          clearImage();
+        }
+      } catch (err) {
+        addMessage('assistant', `请求错误: ${err.message}`);
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
